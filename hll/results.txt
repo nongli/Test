@@ -1,0 +1,37 @@
+Num values: 1000000
+Num Distinct: 1
+Num Distinct Estimate: 1(0%)
+
+Num Distinct: 10
+Num Distinct Estimate: 10(0%)
+
+Num Distinct: 100
+Num Distinct Estimate: 107(7%)
+
+Num Distinct: 1000
+Num Distinct Estimate: 1257(25.7%)
+
+Num Distinct: 10000
+Num Distinct Estimate: 10882(8.82%)
+
+Num Distinct: 99998
+Num Distinct Estimate: 71518(-28.4806%)
+
+Num Distinct: 632405
+Num Distinct Estimate: 448208(-29.1264%)
+
+Num Distinct: 952096
+Num Distinct Estimate: 727369(-23.6034%)
+
+Num Distinct: 994887
+Num Distinct Estimate: 991253(-0.365268%)
+
+Num Distinct: 999456
+Num Distinct Estimate: 1058808(5.93843%)
+
+Num Distinct: 999745
+Num Distinct Estimate: 876170(-12.3607%)
+
+Num Distinct: 999796
+Num Distinct Estimate: 1121595(12.1824%)
+

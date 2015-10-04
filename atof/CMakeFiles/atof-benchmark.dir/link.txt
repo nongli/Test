@@ -1,0 +1,1 @@
+/usr/bin/c++    -msse4.2 -O3 -DNDEBUG   CMakeFiles/atof-benchmark.dir/atof-benchmark.o CMakeFiles/atof-benchmark.dir/benchmark.o CMakeFiles/atof-benchmark.dir/cpu-info.o  -o atof-benchmark -rdynamic 
