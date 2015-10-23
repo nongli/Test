@@ -1,2 +1,2 @@
 all:
-	g++ -o3 main.cc murmur3.cpp -o hash_test -lrt
+	g++ -O3 -DNDEBUG main.cc murmur3.cpp -o benchmark -lbenchmark

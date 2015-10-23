@@ -4,6 +4,7 @@
 #include <time.h>
 
 #include <boost/cstdint.hpp>
+#include <benchmark/benchmark.h>
 
 #include "xxhash.cc"
 #include "MurmurHash3.h"
@@ -56,55 +57,57 @@ static uint64_t MurmurHash2_64(const void* input, int len, uint64_t seed) {
   return h;
 }
 
-int main(int argc, char** argv) {
-  const int iters = 30;
-  const int N = 1000 * 1000;
-  const int stride = 2;
-  vector<int64_t> vals;
-  vals.resize(N);
+const int N = 64;
+const int STRIDE = 2;
 
-  for (int i = 0; i < N; ++i) {
-    vals[i] = rand();
+#define PREAMBLE\
+  vector<int64_t> vals;                       \
+  vals.resize(N);                             \
+  for (int i = 0; i < N; ++i) {               \
+    vals[i] = rand();                         \
+  }                                           \
+  uint64_t h = 0;                             \
+  uint64_t iterations = 0;                    \
+  while (state.KeepRunning()) {               \
+    ++iterations;                             \
+    for (int i = 0; i < N; i += STRIDE)
+
+#define EPILOG \
+    benchmark::DoNotOptimize(&h);             \
+  }                                           \
+  state.SetItemsProcessed(N * iterations)
+
+static void BM_MurmurHash2_64(benchmark::State& state) {
+  PREAMBLE {
+    h = MurmurHash2_64(&vals[i], sizeof(int64_t) * STRIDE, h);
   }
-
-  timespec start, end;
-  clock_gettime(CLOCK_MONOTONIC, &start);
-
-  unsigned long long h = 0;
-  for (int i = 0; i < iters; ++i) {
-    for (int j = 0; j < N; j += stride) {
-      if (FN == MURMUR2) {
-        h = MurmurHash2_64(&vals[j], sizeof(int64_t) * stride, h);
-      } else if (FN == XXHASH) {
-        h = XXH64(&vals[j], sizeof(int64_t) * stride, h);
-      } else if (FN == XXHASH_NONG) {
-        h = XXH64_endian_align_nong(&vals[j], sizeof(int64_t) * stride, h);
-      } else if (FN == MURMUR3) {
-        MurmurHash3_x86_32(&vals[j], sizeof(int64_t) * stride, h, &h);
-      }
-    }
-  }
-
-  clock_gettime(CLOCK_MONOTONIC, &end);
-  int64_t nanos =
-    (end.tv_sec - start.tv_sec) * 1000L * 1000L * 1000L +
-    (end.tv_nsec - start.tv_nsec);
-
-  double rate = (iters * N) * 1000. / nanos;
-  switch (FN) {
-    case MURMUR2:
-      printf("Murmur2 ");
-      break;
-    case XXHASH:
-      printf("XXHASH ");
-      break;
-    case XXHASH_NONG:
-      printf("XXHASH_NONG ");
-      break;
-    case MURMUR3:
-      printf("MURMUR3 ");
-      break;
-  }
-  printf("Rate: %f million values/second\n", rate);
-  return 0;
+  EPILOG;
 }
+
+static void BM_XXH64(benchmark::State& state) {
+  PREAMBLE {
+    h = XXH64(&vals[i], sizeof(int64_t) * STRIDE, h);
+  }
+  EPILOG;
+}
+
+static void BM_XXH64_align(benchmark::State& state) {
+  PREAMBLE {
+    h = XXH64_endian_align_nong(&vals[i], sizeof(int64_t) * STRIDE, h);
+  }
+  EPILOG;
+}
+
+static void BM_Murmur3(benchmark::State& state) {
+  PREAMBLE {
+    MurmurHash3_x86_32(&vals[i], sizeof(int64_t) * STRIDE, h, &h);
+  }
+  EPILOG;
+}
+
+BENCHMARK(BM_Murmur3);
+BENCHMARK(BM_MurmurHash2_64);
+BENCHMARK(BM_XXH64);
+BENCHMARK(BM_XXH64_align);
+
+BENCHMARK_MAIN();
