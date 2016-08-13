@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package ipc;
+
+service TransferService {
+  rpc Transfer(Empty) returns (TransferData) {}
+}
+
+message Empty {}
+
+message Buffer {
+  bytes data = 1;
+} 
+
+message TransferData {
+  repeated Buffer columns = 1;
+}

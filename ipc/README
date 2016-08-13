@@ -6,5 +6,24 @@ Requirements:
     $ cd benchmark
     $ cmake -DCMAKE_BUILD_TYPE=Release .
     $ sudo make install
+  2. Install grpc: Follow instructions:
+     https://github.com/grpc/grpc/blob/release-0_14/INSTALL.md
+  3. This will likely also have you install proto3.
+     https://github.com/google/protobuf/blob/3.0.0-GA/src/README.md
 
+
+Generate protos:
+  $ make protos
+
+
+Results on my machine:
+Benchmark             Time           CPU Iterations
+---------------------------------------------------
+BM_Local         155127 ns     155208 ns      86207   7.86496GB/s   1.57299G items/s
+BM_Copy          246068 ns     246162 ns      57003   4.95893GB/s   1015.59M items/s
+BM_TmpFile       513136 ns     513278 ns      27603   2.37825GB/s   487.066M items/s
+BM_LocalFile     498535 ns     498687 ns      28571   2.44783GB/s   501.316M items/s
+BM_Tcp           515929 ns     800683 ns      17570   1.52458GB/s   312.233M items/s
+BM_TcpProtos   10378156 ns    3497789 ns       4070   357.369MB/s   71.4737M items/s
+BM_Grpc         2036376 ns    2802872 ns       4875   445.971MB/s   89.1942M items/s
 
