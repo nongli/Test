@@ -9,6 +9,10 @@
 #include <boost/asio.hpp>
 #include <boost/thread/thread.hpp>
 
+#include <boost/interprocess/anonymous_shared_memory.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/interprocess/ipc/message_queue.hpp>
+
 #include <benchmark/benchmark.h>
 #include <grpc++/grpc++.h>
 
@@ -16,6 +20,7 @@
 #include "gen-grpc/transfer.grpc.pb.h"
 
 using boost::asio::ip::tcp;
+using namespace boost::interprocess;
 
 const int NUM_COLS = 5;
 const int NUM_ROWS = 64 * 1024 * 4;
@@ -45,6 +50,11 @@ struct TestData {
       columns[i].buffer = (uint8_t*)proto_data.columns(i).data().data();
       columns[i].len = proto_data.columns(i).data().size();
     }
+  }
+
+  // Max size of the buffers.
+  static int MaxSize() {
+    return NUM_ROWS * NUM_COLS;
   }
 };
 
@@ -89,7 +99,7 @@ void InitData(TestData* data) {
   data->num_bytes = 0;
   for (int i = 0; i < data->columns.size(); ++i) {
     for (int j = 0; j < NUM_ROWS; ++j) {
-      data->columns[i].buffer[j] = j;
+      data->columns[i].buffer[j] = i * j;
     }
     data->num_bytes += NUM_ROWS;
   }
@@ -299,9 +309,20 @@ class TcpTransport : public Transport {
   }
 };
 
+const char* SHARED_MEM_NAME = "IPC_TEST_SHARED_MEM";
+
 class TransferServiceImpl final : public ipc::TransferService::Service {
  public:
-  TransferServiceImpl(const TestData** data) : data(data) {
+  TransferServiceImpl(const TestData** data, bool shared_mem)
+    : data(data),
+      shared_mem(shared_mem) {
+    if (shared_mem) {
+      shared_memory_object::remove(SHARED_MEM_NAME);
+      shared_memory_object shm;
+      shm = shared_memory_object(create_only, SHARED_MEM_NAME, read_write);
+      shm.truncate(TestData::MaxSize());
+      region = mapped_region(shm, read_write);
+    }
   }
 
   virtual grpc::Status Transfer(grpc::ServerContext* context,
@@ -310,10 +331,28 @@ class TransferServiceImpl final : public ipc::TransferService::Service {
     return grpc::Status::OK;
   }
 
+  virtual grpc::Status TransferControl(grpc::ServerContext* context,
+      const ipc::Empty* request, ::ipc::Empty* response) {
+    if (!shared_mem) {
+      std::cerr << "TransferControl() only valid with shared memory." << std::endl;
+    } else {
+      char* dst = (char*)region.get_address();
+      for (int i = 0; i < (*data)->columns.size(); ++i) {
+        memcpy(dst, (*data)->columns[i].buffer, NUM_ROWS);
+        dst += NUM_ROWS;
+      }
+    }
+    return grpc::Status::OK;
+  }
+
   ~TransferServiceImpl() {}
 
  private:
   const TestData** data;
+  const bool shared_mem;
+
+  // Shared memory region.
+  mapped_region region;
 };
 
 void GrpcServerThread(grpc::Server* server) {
@@ -322,9 +361,10 @@ void GrpcServerThread(grpc::Server* server) {
 
 class GrpcTransport : public Transport {
  public:
-  GrpcTransport()
-    : send_data(nullptr),
-      service(&send_data),
+  GrpcTransport(bool shared_mem)
+    : shared_mem(shared_mem),
+      send_data(nullptr),
+      service(&send_data, shared_mem),
       client(ipc::TransferService::NewStub(
           grpc::CreateChannel(
               "localhost:50051", grpc::InsecureChannelCredentials()))) {
@@ -338,11 +378,18 @@ class GrpcTransport : public Transport {
     // The result just points into the proto struct to avoid a copy.
     result_data.columns.resize(NUM_COLS);
     result_data.owns_memory = false;
+
+    if (shared_mem) {
+      shared_memory_object shm =
+          shared_memory_object(open_only, SHARED_MEM_NAME, read_write);
+      region = mapped_region(shm, read_write);
+    }
   }
 
   ~GrpcTransport() {
     server->Shutdown();
     server_thread->join();
+    if (shared_mem) shared_memory_object::remove(SHARED_MEM_NAME);
   }
 
   const TestData* Transfer(const TestData& src) {
@@ -350,17 +397,36 @@ class GrpcTransport : public Transport {
     ipc::Empty request;
     grpc::ClientContext ctx;
     proto_data.Clear();
-    grpc::Status status = client->Transfer(&ctx, request, &proto_data);
-    if (status.ok()) {
-      result_data.FromProtoBuf(proto_data);
-      return &result_data;
+    grpc::Status status;
+
+    if (shared_mem) {
+      status = client->TransferControl(&ctx, request, &request);
     } else {
+      status = client->Transfer(&ctx, request, &proto_data);
+    }
+    if (!status.ok()) {
       std::cerr << "GRPC failed." << std::endl;
       return nullptr;
     }
+    if (shared_mem) {
+      result_data.num_bytes = 0;
+      // This mapping might be avoidable as well.
+      uint8_t* src = (uint8_t*)region.get_address();
+      for (int i = 0; i < result_data.columns.size(); ++i) {
+        int len = NUM_ROWS;
+        result_data.columns[i].buffer = src;
+        result_data.columns[i].len = len;
+        result_data.num_bytes += len;
+        src += len;
+      }
+    } else {
+      result_data.FromProtoBuf(proto_data);
+    }
+    return &result_data;
   }
 
  private:
+  const bool shared_mem;
   const TestData* send_data;
   TransferServiceImpl service;
   std::unique_ptr<grpc::Server> server;
@@ -368,6 +434,9 @@ class GrpcTransport : public Transport {
   std::unique_ptr<ipc::TransferService::Stub> client;
   ipc::TransferData proto_data;
   TestData result_data;
+
+  // Shared memory region.
+  mapped_region region;
 };
 
 /**
@@ -443,8 +512,21 @@ static void BM_TcpProtos(benchmark::State& state) {
   Benchmark(state, &transport);
 }
 
+/**
+ * Benchmark using GRPC (data sent via protos).
+ */
 static void BM_Grpc(benchmark::State& state) {
-  GrpcTransport transport;
+  GrpcTransport transport(false);
+  Benchmark(state, &transport);
+}
+
+/**
+ * Benchmark sending data via shared mem, control handled via grpc
+ * In this version, the data is serialized on the writer side to shared
+ * memory and no deserialization on the reader.
+ */
+static void BM_GrpcSharedMem(benchmark::State& state) {
+  GrpcTransport transport(true);
   Benchmark(state, &transport);
 }
 
@@ -455,5 +537,6 @@ BENCHMARK(BM_LocalFile);
 BENCHMARK(BM_Tcp);
 BENCHMARK(BM_TcpProtos);
 BENCHMARK(BM_Grpc);
+BENCHMARK(BM_GrpcSharedMem);
 
 BENCHMARK_MAIN();

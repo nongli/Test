@@ -3,7 +3,12 @@ syntax = "proto3";
 package ipc;
 
 service TransferService {
+  // Transfers the data.
   rpc Transfer(Empty) returns (TransferData) {}
+
+  // Transfers just the control message. The data is transfered some other
+  // way (e.g. shared memory).
+  rpc TransferControl(Empty) returns (Empty) {}
 }
 
 message Empty {}

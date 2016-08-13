@@ -1,4 +1,4 @@
-Benchmark of a few data sending mechanisms.
+Benchmark of a few mechanism to send data.
 
 Requirements:
   1. Install google benchmark
@@ -15,15 +15,20 @@ Requirements:
 Generate protos:
   $ make protos
 
+Build and run:
+  $ make
+  $ ./benchmark
 
-Results on my machine:
-Benchmark             Time           CPU Iterations
----------------------------------------------------
-BM_Local         155127 ns     155208 ns      86207   7.86496GB/s   1.57299G items/s
-BM_Copy          246068 ns     246162 ns      57003   4.95893GB/s   1015.59M items/s
-BM_TmpFile       513136 ns     513278 ns      27603   2.37825GB/s   487.066M items/s
-BM_LocalFile     498535 ns     498687 ns      28571   2.44783GB/s   501.316M items/s
-BM_Tcp           515929 ns     800683 ns      17570   1.52458GB/s   312.233M items/s
-BM_TcpProtos   10378156 ns    3497789 ns       4070   357.369MB/s   71.4737M items/s
-BM_Grpc         2036376 ns    2802872 ns       4875   445.971MB/s   89.1942M items/s
+
+Results on my machine: ./benchmark --benchmark_min_time=3
+Benchmark                 Time           CPU Iterations
+-------------------------------------------------------
+BM_Local             154840 ns     154837 ns      27487    7.8838GB/s   1.57676G items/s
+BM_Copy              258099 ns     258209 ns      16963   4.72758GB/s   968.208M items/s
+BM_TmpFile           486341 ns     486581 ns       8607   2.50874GB/s   513.789M items/s
+BM_LocalFile         489138 ns     489165 ns       8537   2.49548GB/s   511.075M items/s
+BM_Tcp               511432 ns     794667 ns       5250   1.53612GB/s   314.597M items/s
+BM_TcpProtos        1507614 ns    1632124 ns       3088   765.873MB/s   153.175M items/s
+BM_Grpc             1593026 ns    2134644 ns       2035   585.578MB/s   117.116M items/s
+BM_GrpcSharedMem     617958 ns     715434 ns       4976   1.70624GB/s   349.438M items/s
 

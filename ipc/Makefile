@@ -1,7 +1,7 @@
 GRPC_CPP_PLUGIN_PATH ?= `which grpc_cpp_plugin`
 
 all:
-	g++ -std=c++11 -O3 -DNDEBUG -I./gen-cpp main.cc gen-cpp/transfer.pb.cc gen-grpc/transfer.grpc.pb.cc -o benchmark -lgrpc++ -lgpr -lprotobuf -lbenchmark -lboost_system -lboost_thread -lpthread -ldl
+	g++ -std=c++11 -O3 -DNDEBUG -I./gen-cpp main.cc gen-cpp/transfer.pb.cc gen-grpc/transfer.grpc.pb.cc -o benchmark -lgrpc++ -lgpr -lprotobuf -lbenchmark -lboost_system -lboost_thread -lpthread -ldl -lrt
 
 clean:
 	rm -f benchmark
