@@ -1,0 +1,11 @@
+namespace ipc;
+
+table Column {
+  data:[byte];
+}
+
+table Batch {
+  columns:[Column];
+}
+
+root_type Batch;

@@ -18,6 +18,7 @@
 
 #include "gen-cpp/transfer.pb.h"
 #include "gen-grpc/transfer.grpc.pb.h"
+#include "gen-flatbuf/transfer_generated.h"
 
 using boost::asio::ip::tcp;
 using namespace boost::interprocess;
@@ -37,6 +38,10 @@ struct TestData {
   int expected_sum;
   bool owns_memory;
 
+
+  /**
+   * Serialize to and from Protos
+   */
   void ToProtoBuf(ipc::TransferData* proto_data) const {
     for (int i = 0; i < columns.size(); ++i) {
       ipc::Buffer* buffer = proto_data->add_columns();
@@ -49,6 +54,30 @@ struct TestData {
     for (int i = 0; i < columns.size(); ++i) {
       columns[i].buffer = (uint8_t*)proto_data.columns(i).data().data();
       columns[i].len = proto_data.columns(i).data().size();
+    }
+  }
+
+  /**
+   * Serialize to and from FlatBufs
+   */
+  void ToFlatBuf(flatbuffers::FlatBufferBuilder* builder) const {
+    std::vector<flatbuffers::Offset<ipc::Column>> serialized_columns;
+    for (int i = 0; i < columns.size(); ++i) {
+      flatbuffers::Offset<ipc::Column> c = ipc::CreateColumn(
+          *builder, builder->CreateVector((int8_t*)columns[i].buffer, columns[i].len));
+      serialized_columns.push_back(c);
+    }
+    builder->Finish(ipc::CreateBatch(*builder, builder->CreateVector(serialized_columns)));
+  }
+
+  void FromFlatBuf(int len, const uint8_t* buffer) {
+    num_bytes = 0;
+    const ipc::Batch* batch = ipc::GetBatch(buffer);
+    for (int i = 0; i < columns.size(); ++i) {
+      const flatbuffers::Vector<int8_t>* data = batch->columns()->Get(i)->data();
+      columns[i].len = data->size();
+      columns[i].buffer = (uint8_t*)data->data();
+      num_bytes += data->size();
     }
   }
 
@@ -73,14 +102,19 @@ int SumData(const TestData& data) {
 }
 
 /**
- * Allocates and populates data
+ * Allocates the columns and optionally the buffers backing the columns.
  */
-void AllocateBuffers(TestData* data) {
-  data->owns_memory = true;
+void AllocateBuffers(TestData* data, bool allocate_buffers) {
+  data->owns_memory = allocate_buffers;
   data->columns.resize(NUM_COLS);
   for (int i = 0; i < NUM_COLS; ++i) {
-    data->columns[i].buffer = (uint8_t*)malloc(NUM_ROWS);
-    data->columns[i].len = NUM_ROWS;
+    if (allocate_buffers) {
+      data->columns[i].buffer = (uint8_t*)malloc(NUM_ROWS);
+      data->columns[i].len = NUM_ROWS;
+    } else {
+      data->columns[i].buffer = nullptr;
+      data->columns[i].len = 0;
+    }
   }
 }
 
@@ -119,16 +153,13 @@ class Transport {
 class NoopTransport : public Transport {
  public:
   const TestData* Transfer(const TestData& data) { return &data; }
-
- private:
-  const TestData* data;
 };
 
 // Simple memcpy of the bytes.
 class MemcpyTransport : public Transport {
  public:
   MemcpyTransport() {
-    AllocateBuffers(&data);
+    AllocateBuffers(&data, true);
   }
   ~MemcpyTransport() {
     FreeBuffers(&data);
@@ -152,7 +183,7 @@ class MemcpyTransport : public Transport {
 class TmpFileTransport : public Transport {
  public:
   TmpFileTransport(const char* path) {
-    AllocateBuffers(&data);
+    AllocateBuffers(&data, true);
     if (path == nullptr) {
       tmpfile = std::tmpfile();
     } else {
@@ -194,10 +225,18 @@ class TmpFileTransport : public Transport {
   TestData data;
 };
 
+struct Serialization {
+  enum Type {
+    CUSTOM,
+    PROTOS,
+    FLAT_BUF,
+  };
+};
+
 /**
  * Server thread that will send send when it receives the '0' control message.
  */
-void TcpServerThread(const TestData** data, bool protos) {
+void TcpServerThread(const TestData** data, Serialization::Type serialization) {
   boost::asio::io_service io_service;
   tcp::acceptor server(io_service, tcp::endpoint(tcp::v4(), 1234));
   tcp::socket socket(io_service);
@@ -208,19 +247,33 @@ void TcpServerThread(const TestData** data, bool protos) {
     boost::asio::read(socket, boost::asio::buffer(&msg, sizeof(msg)));
     if (msg == -1) break;
 
-    if (protos) {
-      ipc::TransferData proto_data;
-      (*data)->ToProtoBuf(&proto_data);
-      std::string serialized;
-      proto_data.SerializeToString(&serialized);
-      int serialized_len = serialized.size();
-      boost::asio::write(socket, boost::asio::buffer(&serialized_len, sizeof(int)));
-      boost::asio::write(socket, boost::asio::buffer(serialized.data(), serialized_len));
-    } else {
-      for (int i = 0; i < (*data)->columns.size(); ++i) {
-        Buffer column = (*data)->columns[i];
-        boost::asio::write(socket, boost::asio::buffer(&column.len, sizeof(int)));
-        boost::asio::write(socket, boost::asio::buffer(column.buffer, column.len));
+    switch (serialization) {
+      case Serialization::PROTOS: {
+        ipc::TransferData proto_data;
+        (*data)->ToProtoBuf(&proto_data);
+        std::string serialized;
+        proto_data.SerializeToString(&serialized);
+        int serialized_len = serialized.size();
+        boost::asio::write(socket, boost::asio::buffer(&serialized_len, sizeof(int)));
+        boost::asio::write(socket, boost::asio::buffer(serialized.data(), serialized_len));
+        break;
+      }
+      case Serialization::CUSTOM: {
+        for (int i = 0; i < (*data)->columns.size(); ++i) {
+          Buffer column = (*data)->columns[i];
+          boost::asio::write(socket, boost::asio::buffer(&column.len, sizeof(int)));
+          boost::asio::write(socket, boost::asio::buffer(column.buffer, column.len));
+        }
+        break;
+      }
+      case Serialization::FLAT_BUF: {
+        flatbuffers::FlatBufferBuilder builder;
+        (*data)->ToFlatBuf(&builder);
+        int serialized_len = builder.GetSize();
+        boost::asio::write(socket, boost::asio::buffer(&serialized_len, sizeof(int)));
+        boost::asio::write(socket, boost::asio::buffer(
+            builder.GetBufferPointer(), serialized_len));
+        break;
       }
     }
   }
@@ -229,16 +282,21 @@ void TcpServerThread(const TestData** data, bool protos) {
 // Reads and writes the data over tcp to localhost.
 class TcpTransport : public Transport {
  public:
-  TcpTransport(bool protos)
-    : protos(protos),
+  TcpTransport(Serialization::Type serialization)
+    : serialization(serialization),
       send_data(nullptr),
-      server_thread(boost::bind(TcpServerThread, &send_data, protos)) {
-    if (protos) {
-      // If protos, the result just points into the proto struct to avoid a copy.
-      result_data.columns.resize(NUM_COLS);
-      result_data.owns_memory = false;
-    } else {
-      AllocateBuffers(&result_data);
+      server_thread(boost::bind(TcpServerThread, &send_data, serialization)) {
+    switch (serialization) {
+      case Serialization::FLAT_BUF:
+      case Serialization::PROTOS: {
+        // If protos, the result just points into the deserialized struct to avoid a copy.
+        AllocateBuffers(&result_data, false);
+        break;
+      }
+      case Serialization::CUSTOM: {
+        AllocateBuffers(&result_data, true);
+        break;
+      }
     }
 
     tcp::resolver resolver(io_service);
@@ -264,38 +322,53 @@ class TcpTransport : public Transport {
 
     // Read the bytes.
     boost::system::error_code error;
-    if (protos) {
-      int serialized_len;
-      socket->read_some(boost::asio::buffer(&serialized_len, sizeof(int)), error);
-      std::string serialized;
-      serialized.resize(serialized_len);
-      ReadFully((uint8_t*)serialized.data(), serialized_len);
+    switch (serialization) {
+      case Serialization::PROTOS: {
+        int serialized_len;
+        socket->read_some(boost::asio::buffer(&serialized_len, sizeof(int)), error);
+        std::string serialized;
+        serialized.resize(serialized_len);
+        ReadFully((uint8_t*)serialized.data(), serialized_len);
 
-      proto_data.Clear();
-      proto_data.ParseFromString(serialized);
-      result_data.FromProtoBuf(proto_data);
-    } else {
-      result_data.num_bytes = 0;
-      for (int i = 0; i < result_data.columns.size(); ++i) {
-        Buffer* column = &result_data.columns[i];
-        socket->read_some(boost::asio::buffer(&column->len, sizeof(int)), error);
-        if (error) throw boost::system::system_error(error);
-        ReadFully(column->buffer, column->len);
-        if (error) throw boost::system::system_error(error);
-        result_data.num_bytes += column->len;
+        proto_data.Clear();
+        proto_data.ParseFromString(serialized);
+        result_data.FromProtoBuf(proto_data);
+        break;
+      }
+      case Serialization::CUSTOM: {
+        result_data.num_bytes = 0;
+        for (int i = 0; i < result_data.columns.size(); ++i) {
+          Buffer* column = &result_data.columns[i];
+          socket->read_some(boost::asio::buffer(&column->len, sizeof(int)), error);
+          if (error) throw boost::system::system_error(error);
+          ReadFully(column->buffer, column->len);
+          if (error) throw boost::system::system_error(error);
+          result_data.num_bytes += column->len;
+        }
+        break;
+      }
+      case Serialization::FLAT_BUF: {
+        int serialized_len;
+        socket->read_some(boost::asio::buffer(&serialized_len, sizeof(int)), error);
+        serialized_buffer.resize(serialized_len);
+        ReadFully(serialized_buffer.data(), serialized_len);
+        result_data.FromFlatBuf(serialized_len, serialized_buffer.data());
+        break;
       }
     }
     return &result_data;
   }
 
  private:
-  const bool protos;
+  const Serialization::Type serialization;
   boost::asio::io_service io_service;
   const TestData* send_data;
-  TestData result_data;
-  ipc::TransferData proto_data;
   boost::thread server_thread;
   boost::shared_ptr<tcp::socket> socket;
+
+  ipc::TransferData proto_data;
+  TestData result_data;
+  std::vector<uint8_t> serialized_buffer;
 
   void ReadFully(uint8_t* buffer, int len) {
     boost::system::error_code error;
@@ -459,7 +532,7 @@ void Benchmark(benchmark::State& state, TestData* data, Transport* transport) {
 // Utility to benchmark non-shared memory cases.
 void Benchmark(benchmark::State& state, Transport* transport) {
   TestData data;
-  AllocateBuffers(&data);
+  AllocateBuffers(&data, true);
   Benchmark(state, &data, transport);
   FreeBuffers(&data);
 }
@@ -500,7 +573,7 @@ static void BM_LocalFile(benchmark::State& state) {
  * Benchmark using tcp socket.
  */
 static void BM_Tcp(benchmark::State& state) {
-  TcpTransport transport(false);
+  TcpTransport transport(Serialization::CUSTOM);
   Benchmark(state, &transport);
 }
 
@@ -508,7 +581,15 @@ static void BM_Tcp(benchmark::State& state) {
  * Benchmark using protos over tcp socket.
  */
 static void BM_TcpProtos(benchmark::State& state) {
-  TcpTransport transport(true);
+  TcpTransport transport(Serialization::PROTOS);
+  Benchmark(state, &transport);
+}
+
+/**
+ * Benchmark using flatbuf over tcp socket.
+ */
+static void BM_TcpFlatBuf(benchmark::State& state) {
+  TcpTransport transport(Serialization::FLAT_BUF);
   Benchmark(state, &transport);
 }
 
@@ -536,6 +617,7 @@ BENCHMARK(BM_TmpFile);
 BENCHMARK(BM_LocalFile);
 BENCHMARK(BM_Tcp);
 BENCHMARK(BM_TcpProtos);
+BENCHMARK(BM_TcpFlatBuf);
 BENCHMARK(BM_Grpc);
 BENCHMARK(BM_GrpcSharedMem);
 

@@ -11,3 +11,7 @@ protos: transfer.proto
 	mkdir -p gen-grpc
 	protoc transfer.proto --cpp_out=gen-cpp
 	protoc transfer.proto --grpc_out=gen-grpc --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_PATH}
+
+flatbuf: transfer.fbs
+	mkdir -p gen-flatbuf
+	flatc -c -b -o gen-flatbuf transfer.fbs

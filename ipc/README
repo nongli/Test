@@ -10,10 +10,18 @@ Requirements:
      https://github.com/grpc/grpc/blob/release-0_14/INSTALL.md
   3. This will likely also have you install proto3.
      https://github.com/google/protobuf/blob/3.0.0-GA/src/README.md
+  4. Flatbuf
+    $ wget https://github.com/google/flatbuffers/archive/v1.3.0.tar.gz
+    $ cd flatbuffers-1.3.0
+    $ cmake . && make
+    $ sudo make install
 
 
 Generate protos:
   $ make protos
+
+Generate flatbufs:
+  $ make flatbuf
 
 Build and run:
   $ make
@@ -23,12 +31,13 @@ Build and run:
 Results on my machine: ./benchmark --benchmark_min_time=3
 Benchmark                 Time           CPU Iterations
 -------------------------------------------------------
-BM_Local             154840 ns     154837 ns      27487    7.8838GB/s   1.57676G items/s
-BM_Copy              258099 ns     258209 ns      16963   4.72758GB/s   968.208M items/s
-BM_TmpFile           486341 ns     486581 ns       8607   2.50874GB/s   513.789M items/s
-BM_LocalFile         489138 ns     489165 ns       8537   2.49548GB/s   511.075M items/s
-BM_Tcp               511432 ns     794667 ns       5250   1.53612GB/s   314.597M items/s
-BM_TcpProtos        1507614 ns    1632124 ns       3088   765.873MB/s   153.175M items/s
-BM_Grpc             1593026 ns    2134644 ns       2035   585.578MB/s   117.116M items/s
-BM_GrpcSharedMem     617958 ns     715434 ns       4976   1.70624GB/s   349.438M items/s
+BM_Local             153158 ns     153203 ns      24882   7.96787GB/s   1.59357G items/s
+BM_Copy              256957 ns     256950 ns      16330   4.75073GB/s    972.95M items/s
+BM_TmpFile           492938 ns     492913 ns       8537   2.47651GB/s   507.189M items/s
+BM_LocalFile         490810 ns     490789 ns       8468   2.48723GB/s   509.384M items/s
+BM_Tcp               516280 ns     805155 ns       5276   1.51611GB/s   310.499M items/s
+BM_TcpProtos        1632156 ns    1819326 ns       2225   687.068MB/s   137.414M items/s
+BM_TcpFlatBuf      12148281 ns   11548387 ns        372    108.24MB/s    21.648M items/s
+BM_Grpc             1971023 ns    2738211 ns       1845   456.502MB/s   91.3005M items/s
+BM_GrpcSharedMem     837681 ns     989672 ns       4357   1.23344GB/s   252.609M items/s
 
