@@ -8,7 +8,7 @@ using namespace std;
 static const uint64_t MURMUR_PRIME = 0xc6a4a7935bd1e995;
 static const int MURMUR_R = 47;
 
-#define SIMPLE_HASH 1
+#define SIMPLE_HASH 0
 
 // Murmur2 hash implementation returning 64-bit hashes.
 static uint64_t MurmurHash2_64(const void* input, int len, uint64_t seed) {
