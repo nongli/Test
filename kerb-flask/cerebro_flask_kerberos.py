@@ -26,18 +26,17 @@ def init_kerberos(app, service='HTTP', hostname=gethostname(), principal=None):
     '''
     global _SERVICE_NAME
 
-    service="cerebro"
-    hostname="cerebro"
     _SERVICE_NAME = "%s@%s" % (service, hostname)
 
     if 'KRB5_KTNAME' not in environ:
-        app.logger.warn("Kerberos: set KRB5_KTNAME to your keytab file")
+        app.logger.error("Kerberos: set KRB5_KTNAME to your keytab file")
         return False
     elif principal is None:
         try:
             principal = kerberos.getServerPrincipalDetails(service, hostname)
         except kerberos.KrbError as exc:
-            app.logger.warn("Kerberos: %s" % exc.message[0])
+            app.logger.error("Kerberos: %s" % exc.message[0])
+            app.logger.error("ServiceName: %s" % _SERVICE_NAME)
             return False
     app.logger.info("Kerberos: server is %s" % principal)
     return True
@@ -72,29 +71,26 @@ def _gssapi_authenticate(token):
     '''
     state = None
     ctx = stack.top
+
     try:
         rc, state = kerberos.authGSSServerInit(_SERVICE_NAME)
-        print("1 " + str(rc))
         if rc != kerberos.AUTH_GSS_COMPLETE:
-            print("here")
+            print("Authentication error. Could not init server. RC=%s" % rc)
             return None
 
-        print(token)
-        print(state)
-        print(kerberos.authGSSServerUserName(state))
         rc = kerberos.authGSSServerStep(state, token)
-        print("2 " + str(rc))
-        print(state)
         if rc == kerberos.AUTH_GSS_COMPLETE:
             ctx.kerberos_token = kerberos.authGSSServerResponse(state)
             ctx.kerberos_user = kerberos.authGSSServerUserName(state)
+            print("Authenticated user: %s" % ctx.kerberos_user)
             return rc
         elif rc == kerberos.AUTH_GSS_CONTINUE:
             return kerberos.AUTH_GSS_CONTINUE
         else:
+            print("Authentication error. RC=%s" % rc)
             return None
     except kerberos.GSSError as exc:
-        print("Kerberos: %s" % str(exc))
+        print("Authentication error: %s" % str(exc))
         return None
     finally:
         if state:
@@ -114,14 +110,16 @@ def requires_authentication(function):
     '''
     @wraps(function)
     def decorated(*args, **kwargs):
+        if _SERVICE_NAME is None:
+            response = function(None, *args, **kwargs)
+            response = make_response(response)
+            return response
+
         header = request.headers.get("Authorization")
         if header:
             ctx = stack.top
             token = ''.join(header.split()[1:])
-            print token
             rc = _gssapi_authenticate(token)
-            print("RC: " + str(rc))
-            print(ctx)
             if rc == kerberos.AUTH_GSS_COMPLETE:
                 response = function(ctx.kerberos_user, *args, **kwargs)
                 response = make_response(response)
