@@ -107,7 +107,8 @@ class Lru2Cache : public Cache {
         // Just fits.
         Entry* entry = new Entry();
         entry->key = key;
-        entry->t1 = entry->t2 = timestamp;
+        entry->t1 = 0;
+        entry->t2 = timestamp;
         cache[key] = entry;
         history.push_back(entry);
         return;
@@ -119,7 +120,8 @@ class Lru2Cache : public Cache {
 
       // Repurpose the entry object and add it
       history[0]->key = key;
-      history[0]->t1 = history[0]->t2 = timestamp;
+      history[0]->t1 = 0;
+      history[0]->t2 = timestamp;
       cache[key] = history[0];
     }
     virtual void Clear() {
