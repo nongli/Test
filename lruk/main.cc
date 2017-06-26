@@ -85,16 +85,22 @@ class LruCache : public Cache {
     std::list<int> history;
 };
 
+// Running test: LRU-2 Cache
+// cyclic: Hits 7999/10000 (0.80)
+// clumpy: Hits 8796/10000 (0.88)
+// normal: Hits 6197/10000 (0.62)
+// temporal: Hits 3566/10000 (0.36)
+// clumpy with scan: Hits 6799/10000 (0.68)
 class Lru2Cache : public Cache {
   public:
     explicit Lru2Cache(int capacity)
       : Cache(capacity), timestamp(0) {
-      }
+    }
     virtual ~Lru2Cache() {}
 
     virtual bool Get(int key) {
       std::map<int, Entry*>::iterator it = cache.find(key);
-      if (it == cache.end()) return false;
+      if (it == cache.end() || !it->second->cached) return false;
       ++timestamp;
       it->second->t1 = it->second->t2;
       it->second->t2 = timestamp;
@@ -106,49 +112,59 @@ class Lru2Cache : public Cache {
       if (cache.size() < capacity) {
         // Just fits.
         Entry* entry = new Entry();
-        entry->key = key;
+        entry->cached = true;
         entry->t1 = 0;
         entry->t2 = timestamp;
         cache[key] = entry;
-        history.push_back(entry);
         return;
       }
-      // evict by sorting
-      sort(history.begin(), history.end(), EntryLessThan());
-      // Remove first entry
-      cache.erase(history[0]->key);
 
-      // Repurpose the entry object and add it
-      history[0]->key = key;
-      history[0]->t1 = 0;
-      history[0]->t2 = timestamp;
-      cache[key] = history[0];
+      Evict();
+      Entry* entry = cache[key];
+      if (entry == nullptr) {
+        entry = new Entry();
+        entry->cached = true;
+        entry->t1 = 0;
+        entry->t2 = timestamp;
+        cache[key] = entry;
+      } else {
+        entry->cached = true;
+        entry->t1 = entry->t2;
+        entry->t2 = timestamp;
+      }
     }
     virtual void Clear() {
       timestamp = 0;
-      cache.clear();
-      for (int i = 0; i < history.size(); i++) {
-        delete history[i];
+      for (auto& v: cache) {
+        delete v.second;
       }
-      history.clear();
+      cache.clear();
     }
+
   private:
     struct Entry {
-      int key;
+      bool cached;
       // Last two access times. t1 <= t2
       int64_t t1, t2;
     };
 
-    struct EntryLessThan {
-      inline bool operator() (const Entry* e1, const Entry* e2) {
-        return e1->t1 < e2->t1;
-      }
-    };
+    void Evict() {
+      int64_t oldest_t1 = INT_MAX;
+      int64_t oldest = INT_MAX;
+      Entry* oldest_entry = nullptr;
 
+      for (auto& v: cache) {
+        if (v.second->t1 < oldest_t1 || (v.second->t1 == oldest_t1 && v.second->t2 < oldest_t2)) {
+          oldest_t1 = v.second->t1;
+          oldest_t2 = v.second->t2;
+          oldest_entry = v.second;
+        }
+      }
+      oldest_entry->cached = false;
+    }
+
+    // History of entries, not all of these are cached.
     std::map<int, Entry*> cache;
-    // Entries that are in the cache. This is sorted to get the LRU entry.
-    // This should be a priority queue or some data structure like that.
-    std::vector<Entry*> history;
     int64_t timestamp;
 };
 
