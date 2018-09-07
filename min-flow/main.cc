@@ -85,7 +85,7 @@ class Graph {
     }
   }
 
-  /*
+  /**
    * Add an expense just for all participants
    */
   void AddExpense(const std::string& payer, float amt) {
@@ -94,6 +94,9 @@ class Graph {
     }
   }
 
+  /**
+   * Prints the payout as a csv table
+   */
   void PrintCsv() {
     int N = people_.size();
     printf("            ");
@@ -122,6 +125,7 @@ class Graph {
     SimplifyTrivial();
     simplify(graph_, people_.size());
     simplify(graph_, people_.size());
+    SimplifySinks();
   }
 
   void PrintGraph() {
@@ -156,6 +160,74 @@ class Graph {
         } else {
           graph_[c * people_.size() + i] -= graph_[i * people_.size() + c];
           graph_[i * people_.size() + c] = 0;
+        }
+      }
+    }
+  }
+
+  float v(int row, int col) {
+    return graph_[row * people_.size() + col];
+  }
+
+  void set(int row, int col, float v) {
+    graph_[row * people_.size() + col] = v;
+  }
+
+  /**
+   * Look for the case where A and B both owe C and D. One of A-C,A-D,B-C or B-D
+   * can be deleted.
+   */
+  void SimplifySinks() {
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (int c = 0; c < people_.size(); c++) {
+        for (int d = c + 1; d < people_.size(); d++) {
+          int a = -1;
+          for (int i = 0; i < people_.size(); i++) {
+            if (v(i, c) != 0 && v(i, d) != 0) {
+              // Found someone that owes both c and d
+              if (a == -1) {
+                a = i;
+              } else {
+                int b = i;
+                float ac = v(a, c);
+                float ad = v(a, d);
+                float bc = v(b, c);
+                float bd = v(b, d);
+                if (bd < bc && bd < ad && bd < ac) {
+                  // bd is smallest
+                  bc += bd;
+                  ac -= bd;
+                  ad += bd;
+                  bd -= bd;
+                  changed = true;
+                } else if (ac < ad && ac < bc && ac < bd) {
+                  // ac is smallest
+                  bc += ac;
+                  bd -= ac;
+                  ad += ac;
+                  ac -= ac;
+                  changed = true;
+                } else if (ad < ac && ad < bc && ad < bd) {
+                  // ad is smallest
+                  bd += ad;
+                  bc -= ad;
+                  ac += ad;
+                  ad -= ad;
+                  changed = true;
+                } else {
+                  printf("Found someone else.\n");
+                  printf("%f %f %f %f\n", ac, ad, bc, bd);
+                }
+
+                set(a, c, ac);
+                set(a, d, ad);
+                set(b, c, bc);
+                set(b, d, bd);
+              }
+            }
+          }
         }
       }
     }
