@@ -1,74 +1,32 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <map>
+#include <string>
 #include <vector>
 using namespace std;
 
-const char* PEOPLE[] = {
-  "Marshall",
-  "Mark",
-  "Itay",
-  "Nong",
-  "Panda",
-  "Greg",
-  "Joe",
-};
-
-const int NUM_PEOPLE = sizeof(PEOPLE) / sizeof(PEOPLE[0]);
-
-void printCsv(float* g) {
-  printf("            ");
-  for (int i = 0; i < NUM_PEOPLE; i++) {
-    printf("%-10s", PEOPLE[i]);
-  }
-  printf("\n");
-  //const char* sep = "%-10s";
-  const char* sep = "\t%s";
-  for (int i = 0; i < NUM_PEOPLE; i++) {
-    printf("%-10s  ", PEOPLE[i]);
-    for (int j = 0; j < NUM_PEOPLE; j++) {
-      if (g[i * NUM_PEOPLE + j] == 0) {
-        printf(sep, "\\");
-      } else {
-        char buf[256];
-        sprintf(buf, "%0.2f", g[i * NUM_PEOPLE + j]);
-        printf(sep, buf);
-      }
-    }
-    printf("\n");
-  }
-}
-
-void printGraph(float* g, int w) {
-  for (int i = 0; i < w; i++) {
-    for (int j = 0; j < w; j++) {
-      printf("%6.2f ", g[i * w + j]);
-    }
-    printf("\n");
-  }
-}
-
-bool simplify(float* g, int w, int srcRow, int srcCol, int dstRow, int dstCol) {
-  float v1 = g[srcCol * NUM_PEOPLE + dstCol];
-  float v2 = g[dstCol * NUM_PEOPLE + srcCol];
+bool simplify(float* g, int N, int srcRow, int srcCol, int dstRow, int dstCol) {
+  float v1 = g[srcCol * N + dstCol];
+  float v2 = g[dstCol * N + srcCol];
   if (v1 != 0) {
-    if (g[srcRow * NUM_PEOPLE + srcCol] < v1 && g[srcRow * NUM_PEOPLE + dstCol] != 0) {
-      g[srcCol * NUM_PEOPLE + dstCol] -= g[srcRow * NUM_PEOPLE + srcCol];
-      g[srcRow * NUM_PEOPLE + dstCol] += g[srcRow * NUM_PEOPLE + srcCol];
-      g[srcRow * NUM_PEOPLE + srcCol] = 0;
+    if (g[srcRow * N + srcCol] < v1 && g[srcRow * N + dstCol] != 0) {
+      g[srcCol * N + dstCol] -= g[srcRow * N + srcCol];
+      g[srcRow * N + dstCol] += g[srcRow * N + srcCol];
+      g[srcRow * N + srcCol] = 0;
       return true;
     }
   } else if (v2 != 0) {
-    if (g[dstRow * NUM_PEOPLE + dstCol] < v2 && g[srcRow * NUM_PEOPLE + srcCol] != 0) {
-      g[dstCol * NUM_PEOPLE + srcCol] -= g[dstRow * NUM_PEOPLE + dstCol];
-      g[srcRow * NUM_PEOPLE + srcCol] += g[dstRow * NUM_PEOPLE + dstCol];
-      g[dstRow * NUM_PEOPLE + dstCol] = 0;
+    if (g[dstRow * N + dstCol] < v2 && g[srcRow * N + srcCol] != 0) {
+      g[dstCol * N + srcCol] -= g[dstRow * N + dstCol];
+      g[srcRow * N + srcCol] += g[dstRow * N + dstCol];
+      g[dstRow * N + dstCol] = 0;
       return true;
     }
-    if (g[dstRow * NUM_PEOPLE + dstCol] > v2 && g[srcRow * NUM_PEOPLE + srcCol] != 0) {
-      g[dstRow * NUM_PEOPLE + srcCol] += v2;
-      g[dstRow * NUM_PEOPLE + dstCol] -= v2;
-      g[dstCol * NUM_PEOPLE + srcCol] = 0;
+    if (g[dstRow * N + dstCol] > v2 && g[srcRow * N + srcCol] != 0) {
+      g[dstRow * N + srcCol] += v2;
+      g[dstRow * N + dstCol] -= v2;
+      g[dstCol * N + srcCol] = 0;
       return true;
     }
   }
@@ -105,149 +63,151 @@ bool simplify(float* g, int w) {
   return true;
 }
 
-void simplifyTrivial(float* g, int w) {
-  for (int i = 0; i < w; i++) {
-    for (int c = i + 1; c < w; c++) {
-      if (g[i * w + c] == 0) continue;
-      if (g[c * w + i] == 0) continue;
+class Graph {
+ public:
+  Graph(const std::vector<std::string>& people) {
+    people_ = people;
+    for (int i = 0; i < people.size(); ++i) {
+      people_idx_[people[i]] = i;
+    }
+    graph_ = new float[people.size() * people.size()];
+    memset(graph_, 0, sizeof(float) * people.size() * people.size());
+  }
 
-      if (g[i * w + c] > g[c * w + i]) {
-        g[i * w + c] -= g[c * w + i];
-        g[c * w + i] = 0;
-      } else {
-        g[c * w + i] -= g[i * w + c];
-        g[i * w + c] = 0;
+  /**
+   * Add an expense just for these participants
+   */
+  void AddExpense(const std::string& payer, float amt,
+      const std::vector<std::string>& participants) {
+    for (int i = 0; i < participants.size(); i++) {
+      int part_id = people_idx_[participants[i]];
+      graph_[part_id * people_.size() + people_idx_[payer]] += amt / participants.size();
+    }
+  }
+
+  /*
+   * Add an expense just for all participants
+   */
+  void AddExpense(const std::string& payer, float amt) {
+    for (int i = 0; i < people_.size(); i++) {
+      graph_[i * people_.size() + people_idx_[payer]] += amt / people_.size();
+    }
+  }
+
+  void PrintCsv() {
+    int N = people_.size();
+    printf("            ");
+    for (int i = 0; i < N; i++) {
+      printf("%-10s", people_[i].c_str());
+    }
+    printf("\n");
+    const char* sep = "%-10s";
+    //const char* sep = "\t%s";
+    for (int i = 0; i < N; i++) {
+      printf("%-10s  ", people_[i].c_str());
+      for (int j = 0; j < N; j++) {
+        if (graph_[i * N + j] == 0) {
+          printf(sep, "\\");
+        } else {
+          char buf[256];
+          sprintf(buf, "%0.2f", graph_[i * N + j]);
+          printf(sep, buf);
+        }
+      }
+      printf("\n");
+    }
+  }
+
+  void Simplify() {
+    SimplifyTrivial();
+    simplify(graph_, people_.size());
+    simplify(graph_, people_.size());
+  }
+
+  void PrintGraph() {
+    for (int i = 0; i < people_.size(); i++) {
+      for (int j = 0; j < people_.size(); j++) {
+        printf("%6.2f ", graph_[i * people_.size() + j]);
+      }
+      printf("\n");
+    }
+  }
+
+ private:
+  std::vector<std::string> people_;
+  std::map<std::string, int> people_idx_;
+  float* graph_;
+
+  void SimplifyTrivial() {
+    // Clear out owning oneself
+    for (int i = 0; i < people_.size(); ++i) {
+      graph_[i * people_.size() + i] = 0;
+    }
+
+    // Clear out where two people own each other
+    for (int i = 0; i < people_.size(); i++) {
+      for (int c = i + 1; c < people_.size(); c++) {
+        if (graph_[i * people_.size() + c] == 0) continue;
+        if (graph_[c * people_.size() + i] == 0) continue;
+
+        if (graph_[i * people_.size() + c] > graph_[c * people_.size() + i]) {
+          graph_[i * people_.size() + c] -= graph_[c * people_.size() + i];
+          graph_[c * people_.size() + i] = 0;
+        } else {
+          graph_[c * people_.size() + i] -= graph_[i * people_.size() + c];
+          graph_[i * people_.size() + c] = 0;
+        }
       }
     }
   }
-}
+};
 
 int main(int argc, char** argv) {
-  float* graph = new float[NUM_PEOPLE * NUM_PEOPLE];
-  memset(graph, 0, sizeof(float) * NUM_PEOPLE * NUM_PEOPLE);
+  Graph g({
+    "Marshall",
+    "Mark",
+    "Itay",
+    "Nong",
+    "Panda",
+    "Greg",
+    "Joe"}
+  );
 
   // 2
-  graph[0 * NUM_PEOPLE + 2] += 290.69;
-  graph[1 * NUM_PEOPLE + 2] += 290.69;
-  graph[2 * NUM_PEOPLE + 2] += 290.69;
-  graph[3 * NUM_PEOPLE + 2] += 290.69;
-  graph[4 * NUM_PEOPLE + 2] += 290.69;
-  graph[5 * NUM_PEOPLE + 2] += 290.69;
-  graph[6 * NUM_PEOPLE + 2] += 290.69;
-
+  g.AddExpense("Itay", 2034.83);
   // 3
-  graph[0 * NUM_PEOPLE + 0] += 16;
-  graph[2 * NUM_PEOPLE + 0] += 16;
-
+  g.AddExpense("Marshall", 38, {"Itay", "Marshall"});
   // 4
-  graph[0 * NUM_PEOPLE + 2] += 8.55;
-  graph[2 * NUM_PEOPLE + 2] += 8;
-
+  g.AddExpense("Itay", 16.55, {"Itay", "Marshall"});
   // 6
-  graph[0 * NUM_PEOPLE + 2] += 146;
-  graph[2 * NUM_PEOPLE + 2] += 146;
-  graph[3 * NUM_PEOPLE + 2] += 146;
-  graph[4 * NUM_PEOPLE + 2] += 146;
-  graph[5 * NUM_PEOPLE + 2] += 146;
-
+  g.AddExpense("Itay", 730, {"Itay", "Marshall", "Greg", "Nong", "Panda"});
   // 8
-  graph[0 * NUM_PEOPLE + 2] += 16.4;
-  graph[2 * NUM_PEOPLE + 2] += 16.4;
-  graph[3 * NUM_PEOPLE + 2] += 16.4;
-  graph[4 * NUM_PEOPLE + 2] += 16.4;
-  graph[6 * NUM_PEOPLE + 2] += 16.4;
-
+  g.AddExpense("Itay", 82.08, {"Itay", "Marshall", "Nong", "Panda", "Joe"});
   // 9
-  graph[0 * NUM_PEOPLE + 2] += 124.23;
-  graph[2 * NUM_PEOPLE + 2] += 124.23;
-  graph[3 * NUM_PEOPLE + 2] += 124.23;
-  graph[4 * NUM_PEOPLE + 2] += 124.23;
-  graph[5 * NUM_PEOPLE + 2] += 124.23;
-  graph[6 * NUM_PEOPLE + 2] += 124.23;
-
+  g.AddExpense("Itay", 745.39, {"Itay", "Marshall", "Greg", "Nong", "Panda", "Joe"});
   // 10
-  graph[0 * NUM_PEOPLE + 4] += 16.66;
-  graph[2 * NUM_PEOPLE + 4] += 16.66;
-  graph[3 * NUM_PEOPLE + 4] += 16.66;
-  graph[4 * NUM_PEOPLE + 4] += 16.66;
-  graph[5 * NUM_PEOPLE + 4] += 16.66;
-  graph[6 * NUM_PEOPLE + 4] += 16.66;
-
+  g.AddExpense("Panda", 100, {"Itay", "Marshall", "Greg", "Nong", "Panda", "Joe"});
   // 11
-  graph[0 * NUM_PEOPLE + 0] += 14;
-  graph[1 * NUM_PEOPLE + 0] += 14;
-  graph[2 * NUM_PEOPLE + 0] += 14;
-  graph[3 * NUM_PEOPLE + 0] += 14;
-  graph[4 * NUM_PEOPLE + 0] += 14;
-  graph[5 * NUM_PEOPLE + 0] += 14;
-  graph[6 * NUM_PEOPLE + 0] += 14;
-
+  g.AddExpense("Marshall", 100);
   // 12
-  graph[0 * NUM_PEOPLE + 3] += 130;
-  graph[1 * NUM_PEOPLE + 3] += 130;
-  graph[2 * NUM_PEOPLE + 3] += 130;
-  graph[3 * NUM_PEOPLE + 3] += 130;
-  graph[4 * NUM_PEOPLE + 3] += 130;
-  graph[5 * NUM_PEOPLE + 3] += 130;
-  graph[6 * NUM_PEOPLE + 3] += 130;
-
+  g.AddExpense("Nong", 910);
   // 13
-  graph[0 * NUM_PEOPLE + 0] += 71;
-  graph[1 * NUM_PEOPLE + 0] += 71;
-  graph[2 * NUM_PEOPLE + 0] += 71;
-  graph[3 * NUM_PEOPLE + 0] += 71;
-  graph[4 * NUM_PEOPLE + 0] += 71;
-  graph[5 * NUM_PEOPLE + 0] += 71;
-  graph[6 * NUM_PEOPLE + 0] += 71;
-
+  g.AddExpense("Marshall", 497);
+  // 14
+  g.AddExpense("Mark", 65, {"Nong", "Marshall", "Mark", "Joe", "Itay"});
   // 15
-  graph[0 * NUM_PEOPLE + 3] += 18.8;
-  graph[1 * NUM_PEOPLE + 3] += 18.8;
-  graph[2 * NUM_PEOPLE + 3] += 18.8;
-  graph[3 * NUM_PEOPLE + 3] += 18.8;
-  graph[6 * NUM_PEOPLE + 3] += 18.8;
-
+  g.AddExpense("Nong", 94, {"Nong", "Marshall", "Mark", "Joe", "Itay"});
   // 16
-  graph[0 * NUM_PEOPLE + 5] += 29;
-  graph[4 * NUM_PEOPLE + 5] += 29;
-  graph[5 * NUM_PEOPLE + 5] += 29;
-
+  g.AddExpense("Greg", 87, {"Greg", "Marshall", "Panda"});
   // 17
-  graph[0 * NUM_PEOPLE + 5] += 13.14;
-  graph[1 * NUM_PEOPLE + 5] += 13.14;
-  graph[2 * NUM_PEOPLE + 5] += 13.14;
-  graph[3 * NUM_PEOPLE + 5] += 13.14;
-  graph[4 * NUM_PEOPLE + 5] += 13.14;
-  graph[5 * NUM_PEOPLE + 5] += 13.14;
-  graph[6 * NUM_PEOPLE + 5] += 13.14;
-
+  g.AddExpense("Greg", 92);
   // 18
-  graph[0 * NUM_PEOPLE + 4] += 12.6;
-  graph[2 * NUM_PEOPLE + 4] += 12.6;
-  graph[3 * NUM_PEOPLE + 4] += 12.6;
-  graph[4 * NUM_PEOPLE + 4] += 12.6;
-  graph[5 * NUM_PEOPLE + 4] += 12.6;
-
+  g.AddExpense("Panda", 63, {"Nong", "Marshall", "Panda", "Itay", "Greg"});
   // 22
-  graph[0 * NUM_PEOPLE + 3] += 310;
-  graph[2 * NUM_PEOPLE + 3] += 310;
-  graph[3 * NUM_PEOPLE + 3] += 310;
-  graph[4 * NUM_PEOPLE + 3] += 310;
-  graph[5 * NUM_PEOPLE + 3] += 310;
+  g.AddExpense("Nong", 1550, {"Nong", "Marshall", "Panda", "Itay", "Greg"});
 
-  printCsv(graph);
+  g.PrintCsv();
   printf("\n");
-
-  // Clear out owning oneself
-  for (int i = 0; i < NUM_PEOPLE; ++i) {
-    graph[i * NUM_PEOPLE + i] = 0;
-  }
-
-  simplifyTrivial(graph, NUM_PEOPLE);
-  simplify(graph, NUM_PEOPLE);
-  printGraph(graph, NUM_PEOPLE);
-  printf("\n");
-  simplify(graph, NUM_PEOPLE);
-
-  printCsv(graph);
+  g.Simplify();
+  g.PrintCsv();
 }
