@@ -6,63 +6,6 @@
 #include <vector>
 using namespace std;
 
-bool simplify(float* g, int N, int srcRow, int srcCol, int dstRow, int dstCol) {
-  float v1 = g[srcCol * N + dstCol];
-  float v2 = g[dstCol * N + srcCol];
-  if (v1 != 0) {
-    if (g[srcRow * N + srcCol] < v1 && g[srcRow * N + dstCol] != 0) {
-      g[srcCol * N + dstCol] -= g[srcRow * N + srcCol];
-      g[srcRow * N + dstCol] += g[srcRow * N + srcCol];
-      g[srcRow * N + srcCol] = 0;
-      return true;
-    }
-  } else if (v2 != 0) {
-    if (g[dstRow * N + dstCol] < v2 && g[srcRow * N + srcCol] != 0) {
-      g[dstCol * N + srcCol] -= g[dstRow * N + dstCol];
-      g[srcRow * N + srcCol] += g[dstRow * N + dstCol];
-      g[dstRow * N + dstCol] = 0;
-      return true;
-    }
-    if (g[dstRow * N + dstCol] > v2 && g[srcRow * N + srcCol] != 0) {
-      g[dstRow * N + srcCol] += v2;
-      g[dstRow * N + dstCol] -= v2;
-      g[dstCol * N + srcCol] = 0;
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool simplify(float* g, int w) {
-  for (int i = 0; i < w; i++) {
-    for (int c = 0; c < w; c++) {
-      if (g[i * w + c] == 0) continue;
-
-      int start = i * w + c;
-      for (int owes = 0; owes < w; owes++) {
-        if (owes != c && g[i * w + owes] != 0) {
-          simplify(g, w, i, c, i, owes);
-        }
-      }
-    }
-  }
-
-  for (int i = w - 1; i >= 0; i--) {
-    for (int c = w - 1; c >= 0; c--) {
-      if (g[i * w + c] == 0) continue;
-
-      int start = i * w + c;
-      for (int owes = 0; owes < w; owes++) {
-        if (owes != c && g[i * w + owes] != 0) {
-          simplify(g, w, i, c, i, owes);
-        }
-      }
-    }
-  }
-  return true;
-}
-
 class Graph {
  public:
   Graph(const std::vector<std::string>& people) {
@@ -81,7 +24,7 @@ class Graph {
       const std::vector<std::string>& participants) {
     for (int i = 0; i < participants.size(); i++) {
       int part_id = people_idx_[participants[i]];
-      graph_[part_id * people_.size() + people_idx_[payer]] += amt / participants.size();
+      add(part_id, people_idx_[payer], amt / participants.size());
     }
   }
 
@@ -90,7 +33,7 @@ class Graph {
    */
   void AddExpense(const std::string& payer, float amt) {
     for (int i = 0; i < people_.size(); i++) {
-      graph_[i * people_.size() + people_idx_[payer]] += amt / people_.size();
+      add(i, people_idx_[payer], amt / people_.size());
     }
   }
 
@@ -109,11 +52,11 @@ class Graph {
     for (int i = 0; i < N; i++) {
       printf("%-10s  ", people_[i].c_str());
       for (int j = 0; j < N; j++) {
-        if (graph_[i * N + j] == 0) {
+        if (get(i, j) == 0) {
           printf(sep, "\\");
         } else {
           char buf[256];
-          sprintf(buf, "%0.2f", graph_[i * N + j]);
+          sprintf(buf, "%0.2f", get(i, j));
           printf(sep, buf);
         }
       }
@@ -123,15 +66,17 @@ class Graph {
 
   void Simplify() {
     SimplifyTrivial();
-    simplify(graph_, people_.size());
-    simplify(graph_, people_.size());
+    bool changed;
+    do {
+      changed = SimplifyInternal();
+    } while (changed);
     SimplifySinks();
   }
 
   void PrintGraph() {
     for (int i = 0; i < people_.size(); i++) {
       for (int j = 0; j < people_.size(); j++) {
-        printf("%6.2f ", graph_[i * people_.size() + j]);
+        printf("%6.2f ", get(i, j));
       }
       printf("\n");
     }
@@ -142,35 +87,55 @@ class Graph {
   std::map<std::string, int> people_idx_;
   float* graph_;
 
-  void SimplifyTrivial() {
-    // Clear out owning oneself
-    for (int i = 0; i < people_.size(); ++i) {
-      graph_[i * people_.size() + i] = 0;
-    }
-
-    // Clear out where two people own each other
-    for (int i = 0; i < people_.size(); i++) {
-      for (int c = i + 1; c < people_.size(); c++) {
-        if (graph_[i * people_.size() + c] == 0) continue;
-        if (graph_[c * people_.size() + i] == 0) continue;
-
-        if (graph_[i * people_.size() + c] > graph_[c * people_.size() + i]) {
-          graph_[i * people_.size() + c] -= graph_[c * people_.size() + i];
-          graph_[c * people_.size() + i] = 0;
-        } else {
-          graph_[c * people_.size() + i] -= graph_[i * people_.size() + c];
-          graph_[i * people_.size() + c] = 0;
-        }
-      }
-    }
-  }
-
-  float v(int row, int col) {
+  float get(int row, int col) const {
     return graph_[row * people_.size() + col];
   }
 
   void set(int row, int col, float v) {
     graph_[row * people_.size() + col] = v;
+  }
+
+  void add(int row, int col, float v) {
+    graph_[row * people_.size() + col] += v;
+  }
+
+  void SimplifyTrivial() {
+    // Clear out owning oneself
+    for (int i = 0; i < people_.size(); ++i) {
+      set(i, i, 0);
+    }
+
+    // Clear out where two people own each other
+    for (int i = 0; i < people_.size(); i++) {
+      for (int c = i + 1; c < people_.size(); c++) {
+        if (get(i, c) == 0) continue;
+        if (get(c, i) == 0) continue;
+
+        if (get(i, c) > get(c, i)) {
+          add(i, c, -get(c, i));
+          set(c, i, 0);
+        } else {
+          add(c, i, -get(i, c));
+          set(i, c, 0);
+        }
+      }
+    }
+  }
+
+  bool SimplifyInternal() {
+    bool changed = false;
+    for (int i = 0; i < people_.size(); i++) {
+      for (int c = 0; c < people_.size(); c++) {
+        if (get(i, c) == 0) continue;
+
+        for (int owes = 0; owes < people_.size(); owes++) {
+          if (owes != c && get(i, owes) != 0) {
+            changed |= Simplify(i, c, i, owes);
+          }
+        }
+      }
+    }
+    return changed;
   }
 
   /**
@@ -185,16 +150,16 @@ class Graph {
         for (int d = c + 1; d < people_.size(); d++) {
           int a = -1;
           for (int i = 0; i < people_.size(); i++) {
-            if (v(i, c) != 0 && v(i, d) != 0) {
+            if (get(i, c) != 0 && get(i, d) != 0) {
               // Found someone that owes both c and d
               if (a == -1) {
                 a = i;
               } else {
                 int b = i;
-                float ac = v(a, c);
-                float ad = v(a, d);
-                float bc = v(b, c);
-                float bd = v(b, d);
+                float ac = get(a, c);
+                float ad = get(a, d);
+                float bc = get(b, c);
+                float bd = get(b, d);
                 if (bd < bc && bd < ad && bd < ac) {
                   // bd is smallest
                   bc += bd;
@@ -231,6 +196,37 @@ class Graph {
         }
       }
     }
+  }
+
+  bool Simplify(int srcRow, int srcCol, int dstRow, int dstCol) {
+    float v1 = get(srcCol, dstCol);
+    float v2 = get(dstCol, srcCol);
+    if (v1 != 0) {
+      if (get(srcRow, srcCol) < v1 && get(srcRow, dstCol) != 0) {
+        add(srcCol, dstCol, -get(srcRow, srcCol));
+        add(srcRow, dstCol, get(srcRow, srcCol));
+        set(srcRow, srcCol, 0);
+        return true;
+      }
+      if (get(srcRow, srcCol) > v1 && get(srcRow, dstCol) != 0) {
+        printf("Should do something.\n");
+      }
+    } else if (v2 != 0) {
+      if (get(dstRow, dstCol) < v2 && get(srcRow, srcCol) != 0) {
+        add(dstCol, srcCol, -get(dstRow, dstCol));
+        add(srcRow, srcCol, get(dstRow, dstCol));
+        set(dstRow, dstCol, 0);
+        return true;
+      }
+      if (get(dstRow, dstCol) > v2 && get(srcRow, srcCol) != 0) {
+        add(dstRow, srcCol, v2);
+        add(dstRow, dstCol, -v2);
+        set(dstCol, srcCol, 0);
+        return true;
+      }
+    }
+
+    return false;
   }
 };
 
