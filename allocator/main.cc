@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+
 #include <cstdint>
+#include <vector>
 
 struct Block {
   uint8_t* ptr;
@@ -17,9 +19,6 @@ class Allocator {
   virtual Block Allocate(size_t size) = 0;
   virtual Block AllocateAll() = 0;
 
-  virtual bool Expand(Block*, size_t delta) = 0;
-  virtual void Reallocate(Block*, size_t size) = 0;
-
   virtual bool Owns(const Block&) = 0;
 
   virtual void Deallocate(const Block&) = 0;
@@ -34,15 +33,6 @@ class Mallocator : public Allocator {
 
   Block AllocateAll() {
     return Block();
-  }
-
-  bool Expand(Block*, size_t delta) {
-    return false;
-  }
-
-  void Reallocate(Block* block, size_t size) {
-    block->ptr = (uint8_t*)realloc(block->ptr, size);
-    block->len = size;
   }
 
   bool Owns(const Block&) {
@@ -75,25 +65,6 @@ class StackAllocator : public Allocator {
     return b;
   }
 
-  bool Expand(Block* blk, size_t delta) {
-    if (blk->ptr + blk->len == ptr_ && ptr_ + delta < end_) {
-      ptr_ += delta;
-      blk->len += delta;
-      return true;
-    }
-    return false;
-  }
-
-  void Reallocate(Block* blk, size_t size) {
-    if (blk->ptr + blk->len == ptr_ && blk->ptr + size < end_) {
-      // Expand the current one
-      ptr_ += size - blk->len;
-      blk->len = size;
-    } else {
-      *blk = Allocate(size);
-    }
-  }
-
   bool Owns(const Block& blk) {
     return blk.ptr >= block_.ptr && block_.ptr < end_;
   }
@@ -114,6 +85,115 @@ class StackAllocator : public Allocator {
   uint8_t* end_;
 };
 
+class FreeListAllocator : public Allocator {
+ public:
+  FreeListAllocator(Allocator* parent, size_t min_size, size_t max_size,
+      int32_t batch_size, int32_t list_size)
+    : parent_(parent), min_size_(min_size), max_size_(max_size),
+      batch_size_(batch_size), list_size_(list_size) {
+  }
+
+  Block Allocate(size_t size) {
+    if (size < min_size_ || size > max_size_) return Block();
+    if (list_.empty()) {
+      return parent_->Allocate(size);
+    }
+    Block blk = list_[list_.size() - 1];
+    list_.pop_back();
+    return blk;
+  }
+
+  Block AllocateAll() {
+    return Block();
+  }
+
+  bool Owns(const Block& blk) {
+    if (blk.len < min_size_ || blk.len > max_size_) return false;
+    return parent_->Owns(blk);
+  }
+
+  void Deallocate(const Block& block) {
+  }
+
+  void DeallocateAll() {
+  }
+
+ private:
+  Allocator* parent_;
+  const size_t min_size_;
+  const size_t max_size_;
+  const int32_t batch_size_;
+  const int32_t list_size_;
+
+  std::vector<Block> list_;
+};
+
+class BitmapBlockAllocator : public Allocator {
+ public:
+  BitmapBlockAllocator(Allocator* parent, size_t block_size)
+    : parent_(parent), block_size_(block_size) {
+  }
+
+  Block Allocate(size_t size) {
+    return Block();
+  }
+
+  Block AllocateAll() {
+    return Block();
+  }
+
+  bool Owns(const Block& blk) {
+    return false;
+  }
+
+  void Deallocate(const Block& block) {
+  }
+
+  void DeallocateAll() {
+  }
+
+ private:
+  Allocator* parent_;
+  const size_t block_size_;
+};
+
+class Segregator : public Allocator {
+ public:
+  Segregator(Allocator* a1, Allocator* a2, size_t threshold)
+    : a1_(a1), a2_(a2), threshold_(threshold) {
+  }
+
+  Block Allocate(size_t size) {
+    if (size < threshold_) return a1_->Allocate(size);
+    return a2_->Allocate(size);
+  }
+
+  Block AllocateAll() {
+    return Block();
+  }
+
+  bool Owns(const Block& blk) {
+    if (blk.len < threshold_) return a1_->Owns(blk);
+    return a2_->Owns(blk);
+  }
+
+  void Deallocate(const Block& blk) {
+    if (blk.len < threshold_) {
+      a1_->Deallocate(blk);
+    } else {
+      a2_->Deallocate(blk);
+    }
+  }
+
+  void DeallocateAll() {
+  }
+
+ private:
+  Allocator* a1_;
+  Allocator* a2_;
+  const size_t threshold_;
+};
+
 class FallbackAllocator : public Allocator {
  public:
   FallbackAllocator(Allocator* primary, Allocator* fallback)
@@ -130,22 +210,6 @@ class FallbackAllocator : public Allocator {
     Block blk = primary_->AllocateAll();
     if (blk.ptr == nullptr) fallback_->AllocateAll();
     return blk;
-  }
-
-  bool Expand(Block* blk, size_t delta) {
-    if (primary_->Owns(*blk)) return primary_->Expand(blk, delta);
-    return fallback_->Expand(blk, delta);
-  }
-
-  void Reallocate(Block* blk, size_t size) {
-    if (primary_->Owns(*blk)) {
-      primary_->Reallocate(blk, size);
-      if (blk->ptr == nullptr) {
-        *blk = fallback_->Allocate(size);
-      }
-    } else {
-      fallback_->Reallocate(blk, size);
-    }
   }
 
   bool Owns(const Block& blk) {
